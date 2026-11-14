@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Policy Debate Flow Timer</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --text: #f0f0f0;
+    --muted: #aaa;
+    --accent: #4ade80;
+    --current: #1a3a2a;
+    --border: #333;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  #setup, #flow { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+  h1 { margin-top: 0; font-size: 1.8rem; }
+  label { display: block; margin: 0.6rem 0 0.2rem; color: var(--muted); }
+  select, input[type="text"] {
+    background: #1a1a1a;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.5rem;
+    border-radius: 6px;
+    width: 100%;
+    max-width: 280px;
+    font-size: 1rem;
+  }
+  .team-block { display: inline-block; vertical-align: top; margin-right: 2rem; min-width: 280px; }
+  button {
+    background: #222;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    margin: 0.3rem;
+  }
+  button:hover { background: #333; }
+  button.primary { background: #166534; border-color: #166534; }
+  button.primary:hover { background: #15803d; }
+  #teams-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 2rem;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+  }
+  #teams-header div { flex: 1; }
+
+  /* Sticky top bar */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg);
+    padding: 0.75rem 0 0.5rem;
+    border-bottom: 1px solid var(--border);
+    margin: -1.5rem -1.5rem 1rem;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  #timer-display {
+    font-size: 4.5rem;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: -2px;
+    margin: 0.2rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+  #current-info {
+    text-align: center;
+    font-size: 1.4rem;
+    margin-bottom: 0.5rem;
+    min-height: 3.5rem;
+  }
+  .controls { text-align: center; margin-bottom: 0.5rem; }
+  #flow-list {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .flow-item {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 1.05rem;
+  }
+  .flow-item:last-child { border-bottom: none; }
+  .flow-item.current {
+    background: var(--current);
+    border-left: 6px solid var(--accent);
+    font-weight: 600;
+    font-size: 1.15rem;
+  }
+  .flow-item .time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .flow-item.current .time { color: var(--accent); }
+  .speaker { color: #93c5fd; }
+  #setup { display: block; }
+  #flow { display: none; }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>Debate Setup</h1>
+  <div class="team-block">
+    <label>Affirmative team size</label>
+    <select id="affSize" onchange="updateNameFields()">
+      <option value="2">2 members</option>
+      <option value="3">3 members</option>
+      <option value="4" selected>4 members</option>
+    </select>
+    <div id="affNames"></div>
+  </div>
+  <div class="team-block">
+    <label>Negative team size</label>
+    <select id="negSize" onchange="updateNameFields()">
+      <option value="2">2 members</option>
+      <option value="3">3 members</option>
+      <option value="4" selected>4 members</option>
+    </select>
+    <div id="negNames"></div>
+  </div>
+  <br>
+  <button class="primary" onclick="startDebate()">Load Flow Chart</button>
+</div>
+
+<div id="flow">
+  <div id="teams-header">
+    <div id="affTeam"></div>
+    <div id="negTeam"></div>
+  </div>
+
+  <div class="sticky-header">
+    <div id="current-info"></div>
+    <div id="timer-display">00:00</div>
+    <div class="controls">
+      <button id="btnStart" onclick="toggleTimer()">Start</button>
+      <button onclick="resetCurrent()">Reset Timer</button>
+      <button onclick="goPrev()">Previous</button>
+      <button onclick="goNext()">Next</button>
+      <button onclick="backToSetup()">New Debate</button>
+    </div>
+  </div>
+
+  <div id="flow-list"></div>
+</div>
+
+<script>
+let affSize, negSize, affNames = {}, negNames = {};
+let sequence = [];
+let currentIndex = 0;
+let remaining = 0;
+let timerId = null;
+let running = false;
+
+// Correct roles from the image
+const AFF_ROLES = {
+  1:  {2:'A1', 3:'A1', 4:'A1'},
+  4:  {2:'A2', 3:'A2', 4:'A2'},
+  6:  {2:'A1', 3:'A3', 4:'A3'},
+  7:  {2:'A2', 3:'A2', 4:'A2'},
+  10: {2:'A1', 3:'A3', 4:'A3'},
+  12: {2:'A2', 3:'A1', 4:'A4'}
+};
+const NEG_ROLES = {
+  2:  {2:'N2', 3:'N2', 4:'N2'},
+  3:  {2:'N1', 3:'N1', 4:'N1'},
+  5:  {2:'N2', 3:'N2', 4:'N2'},
+  8:  {2:'N1', 3:'N3', 4:'N3'},
+  9:  {2:'N1', 3:'N3', 4:'N3'},
+  11: {2:'N2', 3:'N1', 4:'N4'}
+};
+
+const ANSWERERS = {
+  2:  {2:'A1', 3:'A1', 4:'A1'},
+  4:  {2:'N1', 3:'N1', 4:'N1'},
+  6:  {2:'N2', 3:'N2', 4:'N2'},
+  8:  {2:'A2', 3:'A2', 4:'A2'}
+};
+
+function updateNameFields() {
+  affSize = +document.getElementById('affSize').value;
+  negSize = +document.getElementById('negSize').value;
+  let html = '';
+  for (let i = 1; i <= 4; i++) {
+    html += `<label>A${i} name</label><input type="text" id="A${i}" ${i > affSize ? 'style="display:none"' : ''} placeholder="A${i}">`;
+  }
+  document.getElementById('affNames').innerHTML = html;
+  html = '';
+  for (let i = 1; i <= 4; i++) {
+    html += `<label>N${i} name</label><input type="text" id="N${i}" ${i > negSize ? 'style="display:none"' : ''} placeholder="N${i}">`;
+  }
+  document.getElementById('negNames').innerHTML = html;
+}
+updateNameFields();
+
+function getName(role) {
+  if (!role) return '';
+  const map = role.startsWith('A') ? affNames : negNames;
+  return map[role] || role;
+}
+
+function buildSequence() {
+  sequence = [
+    {id:1,  title:'(1) Affirmative Constructive Speech', dur:4*60, side:'aff'},
+    {id:0,  title:'Preparation Time', dur:2*60, side:'prep'},
+    {id:2,  title:'(2) Questions from the Negative', dur:3*60, side:'neg', isQ:true},
+    {id:3,  title:'(3) Negative Constructive Speech', dur:4*60, side:'neg'},
+    {id:0,  title:'Preparation Time', dur:2*60, side:'prep'},
+    {id:4,  title:'(4) Questions from the Affirmative', dur:3*60, side:'aff', isQ:true},
+    {id:0,  title:'Preparation Time', dur:2*60, side:'prep'},
+    {id:5,  title:'(5) Negative Attack', dur:3*60, side:'neg'},
+    {id:6,  title:'(6) Questions from the Affirmative', dur:3*60, side:'aff', isQ:true},
+    {id:7,  title:'(7) Affirmative Attack', dur:3*60, side:'aff'},
+    {id:8,  title:'(8) Questions from the Negative', dur:3*60, side:'neg', isQ:true},
+    {id:0,  title:'Preparation Time', dur:2*60, side:'prep'},
+    {id:9,  title:'(9) Negative Defense', dur:3*60, side:'neg'},
+    {id:10, title:'(10) Affirmative Defense', dur:3*60, side:'aff'},
+    {id:0,  title:'Preparation Time', dur:2*60, side:'prep'},
+    {id:11, title:'(11) Negative Summary', dur:4*60, side:'neg'},
+    {id:12, title:'(12) Affirmative Summary', dur:4*60, side:'aff'}
+  ];
+
+  sequence.forEach(item => {
+    if (item.side === 'prep') {
+      item.display = item.title;
+      return;
+    }
+    const size = item.side === 'aff' ? affSize : negSize;
+    const roles = item.side === 'aff' ? AFF_ROLES : NEG_ROLES;
+    const role = roles[item.id]?.[size] || '';
+    item.role = role;
+    item.speakerName = getName(role);
+
+    if (item.isQ) {
+      const ansSize = item.side === 'aff' ? negSize : affSize;
+      const ansRole = ANSWERERS[item.id]?.[ansSize] || '';
+      item.answererName = getName(ansRole);
+      item.display = `${item.title}<br><span class="speaker">Q: ${item.speakerName} (${role}) &nbsp;|&nbsp; A: ${item.answererName} (${ansRole})</span>`;
+    } else {
+      item.display = `${item.title}<br><span class="speaker">${item.speakerName} (${role})</span>`;
+    }
+  });
+}
+
+function startDebate() {
+  affSize = +document.getElementById('affSize').value;
+  negSize = +document.getElementById('negSize').value;
+  for (let i = 1; i <= 4; i++) {
+    const a = document.getElementById('A'+i);
+    const n = document.getElementById('N'+i);
+    if (a && a.style.display !== 'none') affNames['A'+i] = a.value.trim() || 'A'+i;
+    if (n && n.style.display !== 'none') negNames['N'+i] = n.value.trim() || 'N'+i;
+  }
+  buildSequence();
+  currentIndex = 0;
+  remaining = sequence[0].dur;
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('flow').style.display = 'block';
+  document.getElementById('affTeam').innerHTML = `<strong>Affirmative</strong><br>${Object.entries(affNames).map(([k,v]) => `${k}: ${v}`).join('<br>')}`;
+  document.getElementById('negTeam').innerHTML = `<strong>Negative</strong><br>${Object.entries(negNames).map(([k,v]) => `${k}: ${v}`).join('<br>')}`;
+  renderFlow();
+  updateDisplay();
+}
+
+function renderFlow() {
+  const list = document.getElementById('flow-list');
+  list.innerHTML = sequence.map((item, i) => `
+    <div class="flow-item ${i === currentIndex ? 'current' : ''}">
+      <div>${item.display}</div>
+      <div class="time">${formatTime(item.dur)}</div>
+    </div>
+  `).join('');
+}
+
+function updateDisplay() {
+  const item = sequence[currentIndex];
+  document.getElementById('current-info').innerHTML = item.display;
+  document.getElementById('timer-display').textContent = formatTime(remaining);
+  document.querySelectorAll('.flow-item').forEach((el, i) => {
+    el.classList.toggle('current', i === currentIndex);
+  });
+  const curr = document.querySelector('.flow-item.current');
+  if (curr) curr.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function formatTime(sec) {
+  const m = Math.floor(Math.max(0, sec) / 60);
+  const s = Math.floor(Math.max(0, sec) % 60);
+  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+}
+
+function toggleTimer() {
+  if (running) {
+    clearInterval(timerId);
+    running = false;
+    document.getElementById('btnStart').textContent = 'Start';
+  } else {
+    if (remaining <= 0) remaining = sequence[currentIndex].dur;
+    running = true;
+    document.getElementById('btnStart').textContent = 'Pause';
+    timerId = setInterval(() => {
+      remaining -= 0.1;
+      if (remaining <= 0) {
+        remaining = 0;
+        clearInterval(timerId);
+        running = false;
+        document.getElementById('btnStart').textContent = 'Start';
+        playBeep();
+      }
+      updateDisplay();
+    }, 100);
+  }
+}
+
+function resetCurrent() {
+  if (running) toggleTimer();
+  remaining = sequence[currentIndex].dur;
+  updateDisplay();
+}
+
+function goNext() {
+  if (running) toggleTimer();
+  if (currentIndex < sequence.length - 1) {
+    currentIndex++;
+    remaining = sequence[currentIndex].dur;
+    updateDisplay();
+  }
+}
+
+function goPrev() {
+  if (running) toggleTimer();
+  if (currentIndex > 0) {
+    currentIndex--;
+    remaining = sequence[currentIndex].dur;
+    updateDisplay();
+  }
+}
+
+function backToSetup() {
+  if (running) toggleTimer();
+  document.getElementById('flow').style.display = 'none';
+  document.getElementById('setup').style.display = 'block';
+}
+
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+    setTimeout(() => {
+      const osc2 = ctx.createOscillator();
+      const g2 = ctx.createGain();
+      osc2.connect(g2);
+      g2.connect(ctx.destination);
+      osc2.frequency.value = 880;
+      g2.gain.setValueAtTime(0.4, ctx.currentTime);
+      osc2.start();
+      osc2.stop(ctx.currentTime + 0.4);
+    }, 500);
+  } catch (e) {}
+}
+</script>
+</body>
+</html>
